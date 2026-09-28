@@ -1,0 +1,8 @@
+# Build output
+build/
+dist/
+
+# Compiled binary produced by build.sh at the repo root
+/LiveWallpaper
+
+.DS_Store

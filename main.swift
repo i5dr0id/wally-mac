@@ -26,17 +26,24 @@ private enum Key {
     static let dim = "dimLevel"
     static let library = "libraryFolder"
     static let launchAtLogin = "launchAtLogin"
+    static let source = "sourceFolder"
 }
 
 private let videoExtensions: Set<String> = ["mov", "mp4", "m4v"]
 private let agentLabel = "local.LiveWallpaper"
-/// The checkout if this Mac has one, otherwise the copy of the source shipped
-/// inside the bundle — so "Open Source Folder" works on a machine that only ever
-/// received the packaged app.
+private let repoURL = "https://github.com/i5dr0id/wally-mac"
+
+/// A local working copy if one is configured, otherwise the source shipped inside
+/// the bundle — so "Open Source Folder" works on a machine that only ever received
+/// the packaged app. Point it at a checkout with:
+///
+///     defaults write local.LiveWallpaper sourceFolder ~/path/to/wally-mac
 private var sourceFolder: String {
-    let checkout = NSString(string: "~/Developer/LiveWallpaper").expandingTildeInPath
-    if FileManager.default.fileExists(atPath: checkout + "/main.swift") { return checkout }
-    return Bundle.main.resourcePath ?? checkout
+    let bundled = Bundle.main.resourcePath ?? NSTemporaryDirectory()
+    guard let configured = UserDefaults.standard.string(forKey: Key.source),
+          !configured.isEmpty else { return bundled }
+    let path = NSString(string: configured).expandingTildeInPath
+    return FileManager.default.fileExists(atPath: path + "/main.swift") ? path : bundled
 }
 
 private struct Settings {
@@ -492,6 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         add(menu, "Open Source Folder", #selector(openSource))
+        add(menu, "View on GitHub", #selector(openRepo))
         add(menu, "Quit LiveWallpaper", #selector(quit), key: "q")
     }
 
@@ -584,6 +592,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleCovered() { settings.pauseWhenCovered.toggle(); updatePlayback() }
     @objc private func togglePlayAtLaunch() { settings.playAtLaunch.toggle() }
     @objc private func quit() { NSApp.terminate(nil) }
+
+    @objc private func openRepo() {
+        if let url = URL(string: repoURL) { NSWorkspace.shared.open(url) }
+    }
 
     @objc private func openSource() {
         NSWorkspace.shared.selectFile(sourceFolder + "/main.swift",

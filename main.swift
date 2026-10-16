@@ -423,12 +423,17 @@ private final class VideoWallpaperScreen: DesktopLayer {
 /// A live web page as the wallpaper. Pausing freezes it on its last frame, like
 /// a paused video: the page is snapshotted, then hidden, which makes WebKit stop
 /// its animation frames and throttle its timers.
-private final class WebWallpaperScreen: DesktopLayer {
+private final class WebWallpaperScreen: NSObject, DesktopLayer, WKNavigationDelegate {
+    /// Time after load for the page to paint (fonts, fade-ins) before a pause
+    /// freezes it; snapshotting earlier captures a blank frame.
+    private static let firstPaintDelay: TimeInterval = 2
+
     let window: NSWindow
     private let webView: WKWebView
     private let frozen = NSImageView()
     private let dimView = NSView()
     private var paused = false
+    private var painted = false
 
     init(screen: NSScreen, page: URL, dim: Double) {
         let size = screen.frame.size
@@ -454,7 +459,18 @@ private final class WebWallpaperScreen: DesktopLayer {
         container.addSubview(dimView)
 
         window = makeDesktopWindow(screen: screen, content: container)
+        super.init()
+        webView.navigationDelegate = self
         setDim(dim)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.firstPaintDelay) { [weak self] in
+            guard let self else { return }
+            self.painted = true
+            // Paused while it was loading (e.g. launched on Low Power Mode).
+            if self.paused { self.freeze() }
+        }
     }
 
     /// Fill modes are for video; a page lays itself out to the screen.
@@ -476,8 +492,13 @@ private final class WebWallpaperScreen: DesktopLayer {
     func pause() {
         guard !paused else { return }
         paused = true
+        // Until the page has painted, keep it showing; it freezes once it has.
+        if painted { freeze() }
+    }
+
+    private func freeze() {
         webView.takeSnapshot(with: nil) { [weak self] image, _ in
-            guard let self, self.paused else { return }
+            guard let self, self.paused, let image else { return }
             self.frozen.image = image
             self.frozen.isHidden = false
             self.webView.isHidden = true

@@ -27,6 +27,10 @@ codesign -v build/LiveWallpaper.app
 
 echo "==> installing to $APP"
 launchctl bootout "gui/$(id -u)/local.LiveWallpaper" 2>/dev/null || true
+# A copy started outside launchd (Finder, `open`) survives the bootout, and the
+# single-instance guard would then make the freshly installed copy exit at once.
+pkill -f 'LiveWallpaper.app/Contents/MacOS/LiveWallpaper' 2>/dev/null || true
+sleep 1
 rm -rf "$APP"
 mkdir -p "$HOME/Applications"
 cp -R build/LiveWallpaper.app "$APP"

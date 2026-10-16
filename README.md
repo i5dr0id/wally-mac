@@ -96,7 +96,8 @@ it loops. `WallyClock.saver` runs a web page instead, so the time is live.
 `CLOCK_WEB` defaults to the Concentric clock's offline build
 (`npm run build:saver` → `dist-saver`) and the step is skipped if it is missing.
 `CLOCK_PAGE` is passed to the page as `?page=`. Select **WallyClock** in System
-Settings › Screen Saver (the menu's *Live Clock Screen Saver…* opens it), and set
+Settings › Wallpaper › **Screen Saver…**, under *Other* (the menu's *Live Clock
+Screen Saver…* opens the Wallpaper pane), and set
 *Lock Screen › Require password after screen saver begins* to **Immediately** so
 waking it lands on the lock screen.
 

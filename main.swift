@@ -792,7 +792,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// WallyClock.saver is installed by build.sh; macOS only lets the user pick a
-    /// screen saver from System Settings.
+    /// screen saver from System Settings (Wallpaper › Screen Saver…).
     @objc private func openScreenSaverSettings() {
         let saver = NSString(string: "~/Library/Screen Savers/WallyClock.saver").expandingTildeInPath
         guard FileManager.default.fileExists(atPath: saver) else {
@@ -801,7 +801,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                    "open the live clock screen saver")
             return
         }
-        if let url = URL(string: "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension") {
+        // macOS 26+ has no Screen Saver pane: it is the "Screen Saver…" button on
+        // the Wallpaper pane, and the old pane URL opens General instead.
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension") {
             NSWorkspace.shared.open(url)
         }
     }

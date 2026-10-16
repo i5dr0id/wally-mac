@@ -296,6 +296,29 @@ private enum Aerial {
     }
 }
 
+// MARK: - Session actions
+
+private enum Session {
+    static func startScreenSaver() {
+        NSWorkspace.shared.openApplication(
+            at: URL(fileURLWithPath: "/System/Library/CoreServices/ScreenSaverEngine.app"),
+            configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    /// The same as Apple menu › Lock Screen. `SACLockScreenImmediate` is the private
+    /// login.framework call behind it; if a future macOS drops it, sleeping the
+    /// display locks instead whenever a password is required on wake.
+    static func lockScreen() {
+        typealias LockFn = @convention(c) () -> Int32
+        if let handle = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY),
+           let symbol = dlsym(handle, "SACLockScreenImmediate") {
+            _ = unsafeBitCast(symbol, to: LockFn.self)()
+        } else {
+            run("/usr/bin/pmset", ["displaysleepnow"])
+        }
+    }
+}
+
 // MARK: - Power
 
 private var powerSourceChanged: (() -> Void)?
@@ -603,6 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         add(menu, settings.paused ? "Resume" : "Pause", #selector(togglePause), key: "p")
+        menu.addItem(submenu("Actions", actionsMenu()))
         menu.addItem(.separator())
 
         menu.addItem(submenu("Desktop Wallpaper", desktopMenu()))
@@ -722,6 +746,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return m
     }
 
+    private func actionsMenu() -> NSMenu {
+        let m = NSMenu()
+        add(m, "Lock Screen", #selector(lockScreen))
+        add(m, "Start Screen Saver", #selector(startScreenSaver))
+        return m
+    }
+
     private func gravityMenu() -> NSMenu {
         let m = NSMenu()
         let g = settings.gravity
@@ -748,6 +779,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleCovered() { settings.pauseWhenCovered.toggle(); updatePlayback() }
     @objc private func togglePlayAtLaunch() { settings.playAtLaunch.toggle() }
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func lockScreen() { Session.lockScreen() }
+    @objc private func startScreenSaver() { Session.startScreenSaver() }
 
     @objc private func openRepo() {
         if let url = URL(string: repoURL) { NSWorkspace.shared.open(url) }

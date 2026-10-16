@@ -43,6 +43,7 @@ Installed to `~/Applications/LiveWallpaper.app`, kept running by
 ## Menu
 
 - **Pause / Resume** — manual, ⌘P
+- **Actions** — **Lock Screen** (as in the Apple menu) and **Start Screen Saver**
 - **Desktop Wallpaper** — pick from the library folder, or choose any file
 - **Screen Saver & Lock Screen** — pick a video for the Aerial slot (see below)
 - **Fill Mode** — Fill / Fit / Stretch

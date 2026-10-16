@@ -1,9 +1,11 @@
 import AVFoundation
 import AppKit
 import IOKit.ps
+import WebKit
 
-// LiveWallpaper — loops a video in a desktop-level window, beneath the desktop
-// icons and above the macOS wallpaper, controlled from a menu bar item.
+// LiveWallpaper — loops a video (or shows a live web page) in a desktop-level
+// window, beneath the desktop icons and above the macOS wallpaper, controlled
+// from a menu bar item.
 //
 // Why this exists: macOS plays an Aerial *desktop* wallpaper once on login/unlock
 // and then holds the last frame. The lock screen and screen saver loop forever, but
@@ -16,6 +18,7 @@ import IOKit.ps
 // MARK: - Settings
 
 private enum Key {
+    /// The desktop wallpaper: a video, or an HTML page (see WebContent.swift).
     static let videoPath = "videoPath"
     static let paused = "paused"
     static let playAtLaunch = "startPlayingAtLaunch"
@@ -30,6 +33,15 @@ private enum Key {
 }
 
 private let videoExtensions: Set<String> = ["mov", "mp4", "m4v"]
+private let webExtensions: Set<String> = ["html", "htm"]
+
+private func isWebPage(_ url: URL) -> Bool { webExtensions.contains(url.pathExtension.lowercased()) }
+
+/// Menu name for a wallpaper: a page's `<title>`, otherwise the file name.
+private func displayName(_ url: URL) -> String {
+    if isWebPage(url), let title = htmlTitle(url) { return title }
+    return url.deletingPathExtension().lastPathComponent
+}
 private let agentLabel = "local.LiveWallpaper"
 private let repoURL = "https://github.com/i5dr0id/wally-mac"
 
@@ -295,9 +307,41 @@ private func onACPower() -> Bool {
     return type == "AC Power"
 }
 
-// MARK: - One screen's playback
+// MARK: - One screen's wallpaper
 
-private final class WallpaperScreen {
+/// What the app drives on each screen, whether it shows a video or a web page.
+private protocol DesktopLayer: AnyObject {
+    var window: NSWindow { get }
+    func setGravity(_ g: AVLayerVideoGravity)
+    func setDim(_ value: Double)
+    func play()
+    func pause()
+    func tearDown()
+}
+
+extension DesktopLayer {
+    var isVisible: Bool { window.occlusionState.contains(.visible) }
+}
+
+/// A borderless window directly beneath the desktop icons: above the system
+/// wallpaper, below anything the user interacts with.
+private func makeDesktopWindow(screen: NSScreen, content: NSView) -> NSWindow {
+    let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.contentView = content
+    window.isOpaque = true
+    window.backgroundColor = .black
+    window.hasShadow = false
+    window.ignoresMouseEvents = true
+    window.isReleasedWhenClosed = false
+    window.animationBehavior = .none
+    window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) - 1)
+    window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+    window.setFrame(screen.frame, display: true)
+    window.orderBack(nil)
+    return window
+}
+
+private final class VideoWallpaperScreen: DesktopLayer {
     let window: NSWindow
     private let player: AVQueuePlayer
     private let looper: AVPlayerLooper
@@ -325,20 +369,7 @@ private final class WallpaperScreen {
         view.layer?.backgroundColor = NSColor.black.cgColor
         view.layer?.addSublayer(videoLayer)
 
-        window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.contentView = view
-        window.isOpaque = true
-        window.backgroundColor = .black
-        window.hasShadow = false
-        window.ignoresMouseEvents = true
-        window.isReleasedWhenClosed = false
-        window.animationBehavior = .none
-        // Directly beneath the desktop icons: above the system wallpaper,
-        // below anything the user interacts with.
-        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) - 1)
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.setFrame(screen.frame, display: true)
-        window.orderBack(nil)
+        window = makeDesktopWindow(screen: screen, content: view)
 
         // Note: setting `preferredMaximumResolution` to the display size was tried
         // here and measured as a no-op for local files (2.61% vs 2.62% of one core
@@ -347,8 +378,6 @@ private final class WallpaperScreen {
 
         setDim(dim)
     }
-
-    var isVisible: Bool { window.occlusionState.contains(.visible) }
 
     func setGravity(_ g: AVLayerVideoGravity) {
         CATransaction.begin()
@@ -391,11 +420,83 @@ private final class WallpaperScreen {
     }
 }
 
+/// A live web page as the wallpaper. Pausing freezes it on its last frame, like
+/// a paused video: the page is snapshotted, then hidden, which makes WebKit stop
+/// its animation frames and throttle its timers.
+private final class WebWallpaperScreen: DesktopLayer {
+    let window: NSWindow
+    private let webView: WKWebView
+    private let frozen = NSImageView()
+    private let dimView = NSView()
+    private var paused = false
+
+    init(screen: NSScreen, page: URL, dim: Double) {
+        let size = screen.frame.size
+        let container = NSView(frame: CGRect(origin: .zero, size: size))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.black.cgColor
+
+        webView = makeLocalWebView(frame: container.bounds,
+                                   folder: page.deletingLastPathComponent(),
+                                   page: page.lastPathComponent)
+        container.addSubview(webView)
+
+        frozen.frame = container.bounds
+        frozen.autoresizingMask = [.width, .height]
+        frozen.imageScaling = .scaleAxesIndependently
+        frozen.isHidden = true
+        container.addSubview(frozen)
+
+        dimView.frame = container.bounds
+        dimView.autoresizingMask = [.width, .height]
+        dimView.wantsLayer = true
+        dimView.layer?.backgroundColor = NSColor.black.cgColor
+        container.addSubview(dimView)
+
+        window = makeDesktopWindow(screen: screen, content: container)
+        setDim(dim)
+    }
+
+    /// Fill modes are for video; a page lays itself out to the screen.
+    func setGravity(_ g: AVLayerVideoGravity) {}
+
+    func setDim(_ value: Double) {
+        dimView.isHidden = value <= 0.001
+        dimView.layer?.opacity = Float(value)
+    }
+
+    func play() {
+        guard paused else { return }
+        paused = false
+        webView.isHidden = false
+        frozen.isHidden = true
+        frozen.image = nil
+    }
+
+    func pause() {
+        guard !paused else { return }
+        paused = true
+        webView.takeSnapshot(with: nil) { [weak self] image, _ in
+            guard let self, self.paused else { return }
+            self.frozen.image = image
+            self.frozen.isHidden = false
+            self.webView.isHidden = true
+        }
+    }
+
+    func tearDown() {
+        webView.stopLoading()
+        webView.removeFromSuperview()
+        window.orderOut(nil)
+        window.close()
+    }
+}
+
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settings = Settings()
-    private var screens: [WallpaperScreen] = []
+    private var screens: [DesktopLayer] = []
     private var statusItem: NSStatusItem!
     private var screensAsleep = false
     private var sessionActive = true
@@ -407,7 +508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var pauseReason: String? {
-        if videoMissing { return "No video — choose one below" }
+        if videoMissing { return "No wallpaper — choose one below" }
         if settings.paused { return "Paused" }
         if settings.pauseOnBattery && !onACPower() { return "Paused — on battery" }
         if settings.pauseInLowPower && ProcessInfo.processInfo.isLowPowerModeEnabled { return "Paused — Low Power Mode" }
@@ -475,8 +576,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let name = settings.videoURL.deletingPathExtension().lastPathComponent
-        menu.addItem(header(name.isEmpty ? "No video" : name))
+        let name = displayName(settings.videoURL)
+        menu.addItem(header(name.isEmpty ? "No wallpaper" : name))
         menu.addItem(header(pauseReason ?? "Playing"))
         menu.addItem(.separator())
 
@@ -533,14 +634,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ?? []
     }
 
+    /// Web pages in the library: an HTML file at the top level, or a folder
+    /// holding one (a built site with its assets beside it). A folder's
+    /// `index.html` wins; otherwise its first HTML file alphabetically.
+    private func libraryPages() -> [URL] {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: settings.libraryURL, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
+        return entries.compactMap { entry -> URL? in
+            if isWebPage(entry) { return entry }
+            guard (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                  let html = (try? fm.contentsOfDirectory(at: entry, includingPropertiesForKeys: nil))?
+                      .filter(isWebPage)
+                      .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+            else { return nil }
+            return html.first { $0.lastPathComponent == "index.html" } ?? html.first
+        }
+        .sorted { displayName($0).localizedStandardCompare(displayName($1)) == .orderedAscending }
+    }
+
     private func desktopMenu() -> NSMenu {
         let m = NSMenu()
         let current = settings.videoURL.standardizedFileURL.path
         let files = libraryVideos()
-        if files.isEmpty { m.addItem(header("No videos in \(settings.libraryURL.lastPathComponent)")) }
+        let pages = libraryPages()
+        if files.isEmpty && pages.isEmpty {
+            m.addItem(header("Nothing in \(settings.libraryURL.lastPathComponent)"))
+        }
         for f in files {
             add(m, f.deletingPathExtension().lastPathComponent, #selector(pickDesktop(_:)),
                 on: f.standardizedFileURL.path == current, represented: f)
+        }
+        if !pages.isEmpty {
+            if !files.isEmpty { m.addItem(.separator()) }
+            m.addItem(header("Web Pages"))
+            for p in pages {
+                add(m, displayName(p), #selector(pickDesktop(_:)),
+                    on: p.standardizedFileURL.path == current, represented: p)
+            }
         }
         m.addItem(.separator())
         add(m, "Choose File…", #selector(chooseFile))
@@ -559,7 +690,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 on: Aerial.installedMatches(f), represented: f)
         }
         m.addItem(.separator())
-        add(m, "Use Current Desktop Video", #selector(aerialMatchDesktop))
+        // The Aerial slot can only play a video; a live page needs the screen saver.
+        if !isWebPage(settings.videoURL) {
+            add(m, "Use Current Desktop Video", #selector(aerialMatchDesktop))
+        }
+        add(m, "Live Clock Screen Saver…", #selector(openScreenSaverSettings))
         if Aerial.hasAppleOriginal {
             add(m, "Restore Apple's Aerial", #selector(aerialRestore))
         }
@@ -635,6 +770,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do { try Aerial.restoreApple() } catch { report(error, "restore Apple's Aerial") }
     }
 
+    /// WallyClock.saver is installed by build.sh; macOS only lets the user pick a
+    /// screen saver from System Settings.
+    @objc private func openScreenSaverSettings() {
+        let saver = NSString(string: "~/Library/Screen Savers/WallyClock.saver").expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: saver) else {
+            report(NSError(domain: "LiveWallpaper", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                "WallyClock.saver isn’t installed. Run ./build.sh in the wally-mac folder to build it."]),
+                   "open the live clock screen saver")
+            return
+        }
+        if let url = URL(string: "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private func applyAerial(_ url: URL) {
         do { try Aerial.install(url) } catch { report(error, "set the screen saver") }
     }
@@ -651,8 +801,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func chooseFile() {
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSOpenPanel()
-        panel.title = "Choose a video for the desktop"
-        panel.allowedContentTypes = [.movie, .video, .quickTimeMovie, .mpeg4Movie]
+        panel.title = "Choose a video or web page for the desktop"
+        panel.allowedContentTypes = [.movie, .video, .quickTimeMovie, .mpeg4Movie, .html]
         panel.canChooseDirectories = false
         panel.directoryURL = settings.libraryURL
         if panel.runModal() == .OK, let url = panel.url {
@@ -725,9 +875,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         screens.forEach { $0.tearDown() }
         // On a fresh install the default video won't exist. Show nothing rather than
         // a black rectangle over the wallpaper, and let the menu explain why.
-        screens = videoMissing ? [] : NSScreen.screens.map {
-            WallpaperScreen(screen: $0, url: settings.videoURL,
-                            gravity: settings.gravity, dim: settings.dim)
+        let url = settings.videoURL
+        screens = videoMissing ? [] : NSScreen.screens.map { screen -> DesktopLayer in
+            isWebPage(url)
+                ? WebWallpaperScreen(screen: screen, page: url, dim: settings.dim)
+                : VideoWallpaperScreen(screen: screen, url: url,
+                                       gravity: settings.gravity, dim: settings.dim)
         }
         updatePlayback()
     }

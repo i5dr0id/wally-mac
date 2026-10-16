@@ -21,6 +21,8 @@ login" behaviour. This app supplies the looping desktop layer.
 | File | Purpose |
 |---|---|
 | `main.swift` | The whole app — ~640 lines, no dependencies |
+| `WebContent.swift` | Serves a web page's folder to WebKit (shared with the saver) |
+| `saver/` | WallyClock.saver — a screen saver that runs a live web page |
 | `Info.plist` | Bundle metadata (`LSUIElement` = no Dock tile) |
 | `build.sh` | Compile → bundle → sign → install → reload agent (this Mac) |
 | `package.sh` | Universal arm64+x86_64 build → zip in `dist/` (other Macs) |
@@ -69,6 +71,37 @@ genuinely custom asset cannot be registered — the widely documented
 
 System Settings will still *label* it with the original Aerial's name (on this Mac,
 "Tahoe Day"). That is cosmetic — the name comes from the read-only manifest.
+
+## Web pages
+
+The desktop wallpaper can be a web page instead of a video: pick **Choose File…**
+and select an `.html` file, or put a built site in the library folder (a folder
+holding an `index.html`, or any `.html` file) and it is listed under *Web Pages*.
+
+Pages are served from their folder under a private `wally://` scheme instead of
+`file://`, because WebKit refuses ES module scripts from `file://` — the output of
+Vite and most modern builds would load blank. Pausing (battery, covered desktop,
+manual) snapshots the page and hides it, which stops WebKit's animation frames;
+Dim still applies, Fill Mode does not.
+
+## Live clock screen saver
+
+The Aerial slot only plays a video, so a clock there would show the wrong time as
+it loops. `WallyClock.saver` runs a web page instead, so the time is live.
+`build.sh` builds it from a page folder and installs it to
+`~/Library/Screen Savers`:
+
+    CLOCK_WEB=~/path/to/built/page CLOCK_PAGE=mac-left ./build.sh
+
+`CLOCK_WEB` defaults to the Concentric clock's offline build
+(`npm run build:saver` → `dist-saver`) and the step is skipped if it is missing.
+`CLOCK_PAGE` is passed to the page as `?page=`. Select **WallyClock** in System
+Settings › Screen Saver (the menu's *Live Clock Screen Saver…* opens it), and set
+*Lock Screen › Require password after screen saver begins* to **Immediately** so
+waking it lands on the lock screen.
+
+Since macOS 14 the saver host (`legacyScreenSaver`) may skip `stopAnimation`, so
+the saver also tears its page down on the system's screen-saver-will-stop notice.
 
 ## Power
 

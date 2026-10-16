@@ -13,7 +13,7 @@ rm -rf dist build/universal
 mkdir -p build/universal "$STAGE"
 for arch in arm64 x86_64; do
     swiftc -O -target "$arch-apple-macos$DEPLOY_TARGET" \
-           -o "build/universal/LiveWallpaper.$arch" main.swift
+           -o "build/universal/LiveWallpaper.$arch" main.swift WebContent.swift
 done
 lipo -create -output build/universal/LiveWallpaper \
      build/universal/LiveWallpaper.arm64 build/universal/LiveWallpaper.x86_64
@@ -24,7 +24,7 @@ APP="$STAGE/LiveWallpaper.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp build/universal/LiveWallpaper "$APP/Contents/MacOS/"
 cp Info.plist "$APP/Contents/Info.plist"
-cp main.swift README.md build.sh Info.plist "$APP/Contents/Resources/"
+cp main.swift WebContent.swift README.md build.sh Info.plist "$APP/Contents/Resources/"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
 echo "==> signing"

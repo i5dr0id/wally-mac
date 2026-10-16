@@ -21,8 +21,8 @@ login" behaviour. This app supplies the looping desktop layer.
 | File | Purpose |
 |---|---|
 | `main.swift` | The whole app — ~640 lines, no dependencies |
-| `WebContent.swift` | Serves a web page's folder to WebKit (shared with the saver) |
-| `saver/` | WallyClock.saver — a screen saver that runs a live web page |
+| `WebContent.swift` | Serves a web page's folder to WebKit for web wallpapers |
+| `saver/` | WallyClock.saver — a native live clock screen saver |
 | `Info.plist` | Bundle metadata (`LSUIElement` = no Dock tile) |
 | `build.sh` | Compile → bundle → sign → install → reload agent (this Mac) |
 | `package.sh` | Universal arm64+x86_64 build → zip in `dist/` (other Macs) |
@@ -87,22 +87,28 @@ Dim still applies, Fill Mode does not.
 ## Live clock screen saver
 
 The Aerial slot only plays a video, so a clock there would show the wrong time as
-it loops. `WallyClock.saver` runs a web page instead, so the time is live.
-`build.sh` builds it from a page folder and installs it to
-`~/Library/Screen Savers`:
+it loops. `WallyClock.saver` draws the clock itself (the Concentric "mac-left"
+layout: rings on the left edge, seconds sweeping, minutes rolling), so the time
+is live. `build.sh` builds it and installs it to `~/Library/Screen Savers`,
+bundling the clock font and wallpaper from:
 
-    CLOCK_WEB=~/path/to/built/page CLOCK_PAGE=mac-left ./build.sh
+    CLOCK_ASSETS=~/path/to/folder ./build.sh   # SFStencilNumeric.ttf, wallpaper.jpg
 
-`CLOCK_WEB` defaults to the Concentric clock's offline build
-(`npm run build:saver` → `dist-saver`) and the step is skipped if it is missing.
-`CLOCK_PAGE` is passed to the page as `?page=`. Select **WallyClock** in System
-Settings › Wallpaper › **Screen Saver…**, under *Other* (the menu's *Live Clock
-Screen Saver…* opens the Wallpaper pane), and set
-*Lock Screen › Require password after screen saver begins* to **Immediately** so
-waking it lands on the lock screen.
+`CLOCK_ASSETS` defaults to Concentric's git-ignored `public/local`; without the
+files it falls back to a system font on plain teal.
 
-Since macOS 14 the saver host (`legacyScreenSaver`) may skip `stopAnimation`, so
-the saver also tears its page down on the system's screen-saver-will-stop notice.
+Select it in System Settings › Wallpaper › **Screen Saver…**, under *Other* (the
+menu's *Live Clock Screen Saver…* opens the Wallpaper pane), and set *Lock Screen ›
+Require password after screen saver begins* to **Immediately** so waking it lands
+on the lock screen.
+
+It is drawn with Core Animation, not a web view: inside the saver host
+(`legacyScreenSaver`) WebKit's content process cannot hold the RunningBoard
+assertion it needs, so a `WKWebView` loads the page and then stops rendering,
+leaving the screen black. Since macOS 14 the host may also skip `stopAnimation`,
+so the saver tears down on the system's screen-saver-will-stop notice too.
+
+    log stream --predicate 'subsystem == "local.LiveWallpaper.WallyClock"'
 
 ## Power
 

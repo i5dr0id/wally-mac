@@ -5,9 +5,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 APP="$HOME/Applications/LiveWallpaper.app"
 SAVER="$HOME/Library/Screen Savers/WallyClock.saver"
-# Built web page bundled into the screen saver (Concentric's `npm run build:saver`).
-CLOCK_WEB="${CLOCK_WEB:-$HOME/.i5dr0id/concentric/dist-saver}"
-CLOCK_PAGE="${CLOCK_PAGE:-mac-left}"
+# The clock font and wallpaper bundled into the screen saver (Concentric's
+# git-ignored public/local folder). Without them it falls back to a system font
+# on plain teal.
+CLOCK_ASSETS="${CLOCK_ASSETS:-$HOME/.i5dr0id/concentric/public/local}"
 AGENT="$HOME/Library/LaunchAgents/local.LiveWallpaper.plist"
 
 echo "==> compiling"
@@ -40,26 +41,27 @@ launchctl bootstrap "gui/$(id -u)" "$AGENT"
 launchctl enable "gui/$(id -u)/local.LiveWallpaper" 2>/dev/null || true
 
 echo "==> screen saver"
-if [ -d "$CLOCK_WEB" ]; then
-  swiftc -O -parse-as-library -module-name WallyClock -Xlinker -bundle \
-         -framework ScreenSaver -framework WebKit \
-         -o build/WallyClock saver/WallyClockView.swift WebContent.swift
-  rm -rf build/WallyClock.saver
-  mkdir -p build/WallyClock.saver/Contents/{MacOS,Resources}
-  cp build/WallyClock build/WallyClock.saver/Contents/MacOS/
-  cp saver/Info.plist build/WallyClock.saver/Contents/Info.plist
-  plutil -replace WallyClockPage -string "$CLOCK_PAGE" build/WallyClock.saver/Contents/Info.plist
-  cp -R "$CLOCK_WEB" build/WallyClock.saver/Contents/Resources/web
-  codesign --force --deep -s - build/WallyClock.saver
-  codesign -v build/WallyClock.saver
-  mkdir -p "$(dirname "$SAVER")"
-  rm -rf "$SAVER"
-  cp -R build/WallyClock.saver "$SAVER"
-  # The saver host caches loaded bundles; restart it so the new build is used.
-  killall legacyScreenSaver 2>/dev/null || true
-  echo "    installed $SAVER (page: $CLOCK_PAGE)"
-else
-  echo "    skipped: no web build at $CLOCK_WEB (set CLOCK_WEB to a built page folder)"
-fi
+swiftc -O -parse-as-library -module-name WallyClock -Xlinker -bundle \
+       -framework ScreenSaver -framework QuartzCore \
+       -o build/WallyClock saver/WallyClockView.swift
+rm -rf build/WallyClock.saver
+mkdir -p build/WallyClock.saver/Contents/{MacOS,Resources}
+cp build/WallyClock build/WallyClock.saver/Contents/MacOS/
+cp saver/Info.plist build/WallyClock.saver/Contents/Info.plist
+for f in SFStencilNumeric.ttf wallpaper.jpg; do
+  if [ -f "$CLOCK_ASSETS/$f" ]; then
+    cp "$CLOCK_ASSETS/$f" build/WallyClock.saver/Contents/Resources/
+  else
+    echo "    note: $CLOCK_ASSETS/$f not found; using the fallback"
+  fi
+done
+codesign --force --deep -s - build/WallyClock.saver
+codesign -v build/WallyClock.saver
+mkdir -p "$(dirname "$SAVER")"
+rm -rf "$SAVER"
+cp -R build/WallyClock.saver "$SAVER"
+# The saver host caches loaded bundles; restart it so the new build is used.
+killall legacyScreenSaver 2>/dev/null || true
+echo "    installed $SAVER"
 
 echo "==> done: $(pgrep -f 'LiveWallpaper.app/Contents/MacOS' | head -1)"
